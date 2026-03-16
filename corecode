@@ -1,0 +1,172 @@
+import pandas as pd
+import numpy as np
+import matplotlib.pyplot as plt
+import seaborn as sns
+import yfinance as yf
+from statsmodels.graphics.tsaplots import plot_acf
+from scipy import stats
+
+
+# Style 
+plt.style.use('seaborn-v0_8-darkgrid')
+# Téléchargement des données
+
+tickers = ["SPY", "DAX", "AAPL", "TSLA"]
+data = yf.download(tickers, start="2005-01-01", end="2026-01-01")["Close"]
+
+print(f" Période : {data.index[0].date()} to {data.index[-1].date()}")
+print(f" Nombre de jours de trading : {len(data):,}")
+print("\n Aperçu des prix de clôture :")
+data.tail(5)
+
+
+# Calcul des log-rendements journaliers:
+returns = np.log(data / data.shift(1)).dropna()
+
+# Visualisation : Prix & Rendements SPY
+fig, axes = plt.subplots(2, 1, figsize=(14, 8))
+
+data["SPY"].plot(ax=axes[0], color="blue", linewidth=1.2)
+axes[0].set_title("SPY — Prix de clôture (2005–2026)", fontsize=14, fontweight='bold')
+axes[0].set_ylabel("Prix ($)")
+axes[0].fill_between(data.index, data["SPY"], alpha=0.1, color="blue")
+
+returns["SPY"].plot(ax=axes[1], color="blue", linewidth=0.8, alpha=0.8)
+axes[1].set_title("SPY — Log-rendements journaliers", fontsize=14, fontweight='bold')
+axes[1].set_ylabel("Rendement")
+axes[1].axhline(0, color='black', linewidth=0.5, linestyle='--')
+
+# visualization des crises
+axes[1].axvspan('2008-09-01', '2009-06-01', alpha=0.15, color='red', label='Crise 2008')
+axes[1].axvspan('2020-02-01', '2020-05-01', alpha=0.15, color='orange', label='COVID-19')
+axes[1].axvspan('2022-01-01', '2022-10-01', alpha=0.15, color='purple', label='Bear 2022')
+axes[1].legend(fontsize=9)
+
+plt.tight_layout()
+
+plt.show()
+# rolling volatility
+rolling_vol20 = returns["SPY"].rolling(20).std() * np.sqrt(TRADING_DAYS)
+rolling_vol60 = returns["SPY"].rolling(60).std() * np.sqrt(TRADING_DAYS)
+
+fig, ax = plt.subplots(figsize=(14, 5))
+
+rolling_vol20.plot(ax=ax, label="Rolling Vol 20j (court terme)", color="blue", linewidth=1, alpha=0.8)
+rolling_vol60.plot(ax=ax, label="Rolling Vol 60j (moyen terme)", color="red", linewidth=1.5)
+
+# Zones de crise
+ax.axvspan('2008-09-01', '2009-06-01', alpha=0.1, color='red')
+ax.axvspan('2020-02-01', '2020-05-01', alpha=0.1, color='orange')
+ax.axhline(0.20, color='gray', linestyle='--', linewidth=0.8, label='Seuil 20% (vol normale)')
+
+ax.annotate('Crise 2008\n(vol > 80%)', xy=('2008-11-01', 0.80), fontsize=9, color='red',
+            arrowprops=dict(arrowstyle='->', color='red'),
+            xytext=('2010-01-01', 0.75))
+ax.annotate('COVID 2020\n(vol > 60%)', xy=('2020-03-15', 0.65), fontsize=9, color='darkorange',
+            arrowprops=dict(arrowstyle='->', color='darkorange'),
+            xytext=('2021-01-01', 0.65))
+
+ax.set_title("SPY — Volatilité Rolling Annualisée (2005–2026)", fontsize=14, fontweight='bold')
+ax.set_ylabel("Volatilité annualisée")
+ax.legend()
+plt.tight_layout()
+plt.show()
+
+# EWMA Volatility (RiskMetrics):
+lamda = 0.94  # Paramètre RiskMetrics standard
+ewma_var = returns["SPY"].ewm(alpha=1 - lamda).var()
+ewma_vol = np.sqrt(ewma_var * TRADING_DAYS)
+
+fig, ax = plt.subplots(figsize=(14, 5))
+
+ewma_vol.plot(ax=ax, color="green", linewidth=1.2, label=f'EWMA Vol (λ={lamda})')
+rolling_vol20.plot(ax=ax, color="blue", linewidth=0.8, alpha=0.5, label='Rolling Vol 20j')
+
+ax.set_title("SPY — Volatilité EWMA vs Rolling 20j (RiskMetrics)", fontsize=14, fontweight='bold')
+ax.set_ylabel("Volatilité annualisée")
+ax.legend()
+
+plt.tight_layout()
+plt.show()
+
+print(f" Volatilité EWMA actuelle (dernier point) : {ewma_vol.iloc[-1]:.2%}")
+print(" L'EWMA réagit plus vite que la rolling vol aux chocs car les observations récentes pèsent plus")
+
+#Distribution des rendements:
+fig, axes = plt.subplots(1, 2, figsize=(14, 5))
+
+# Histogramme
+ax = axes[0]
+mu_spy = returns["SPY"].mean()
+sigma_spy = returns["SPY"].std()
+
+returns["SPY"].hist(bins=120, ax=ax, density=True, color="blue", alpha=0.7, label='Rendements réels')
+
+x = np.linspace(returns["SPY"].min(), returns["SPY"].max(), 350)
+ax.plot(x, stats.norm.pdf(x, mu_spy, sigma_spy), 'r-', linewidth=2, label='Distribution Normale')
+
+ax.axvline(returns["SPY"].quantile(0.01), color='orange', linestyle='--', linewidth=1.5, label='VaR 1%')
+ax.set_title("Distribution des Log-Rendements SPY", fontsize=13, fontweight='bold')
+ax.set_xlabel("Rendement journalier")
+ax.legend(fontsize=9)
+
+# QQ Plot
+ax = axes[1]
+stats.probplot(returns["SPY"], dist="norm", plot=ax)
+
+ax.set_title("QQ-Plot : Rendements SPY vs Distribution Normale", fontsize=13, fontweight='bold')
+
+# Kurtosis / Skewness
+kurt = returns["SPY"].kurtosis()
+skew = returns["SPY"].skew()
+ax.text(0.05, 0.95, f'Kurtosis = {kurt:.2f}\nSkewness = {skew:.2f}', 
+        transform=ax.transAxes, verticalalignment='top', fontsize=15)
+
+plt.tight_layout()
+plt.show()
+
+print(f"\n Kurtosis SPY = {kurt:.2f} (Normale = 3.0)")
+print(f" Skewness SPY = {skew:.4f}")
+print("  Les queues réelles sont beaucoup plus épaisses que la normale : risque sous-estimé par Black-Scholes")
+# Autocorrélation :
+fig, axes = plt.subplots(1, 2, figsize=(14, 5))
+
+plot_acf(returns["SPY"], lags=30, ax=axes[0], color="blue")
+axes[0].set_title("ACF des Rendements SPY (lags = 30j)", fontsize=14, fontweight='bold')
+axes[0].set_xlabel("Lag (jours)")
+
+
+plot_acf(returns["SPY"]**2, lags=30, ax=axes[1], color="red")
+axes[1].set_title("ACF des Rendements² SPY (Volatilité)", fontsize=14, fontweight='bold')
+axes[1].set_xlabel("Lag (jours)")
+
+plt.tight_layout()
+plt.show()
+
+print("Conclusion : Les rendements sont peu prévisibles MAIS leur variance l'est (clustering) ")
+print(" C'est le fondement des modèles GARCH pour la prévision de risque.")
+
+# Matrice de Corrélation :
+corr_matrix = returns.corr()
+
+fig, axes = plt.subplots(1, 2, figsize=(14, 5))
+
+# Corrélation période normale (2013-2019)
+corr_normal = returns.loc['2013':'2019'].corr()
+sns.heatmap(corr_normal, annot=True, fmt='.2f', cmap='RdYlGn', 
+            vmin=-1, vmax=1, ax=axes[0], linewidths=0.5)
+axes[0].set_title("Corrélation — Période Calme (2013–2019)", fontsize=12, fontweight='bold')
+
+# Corrélation période de crise (COVID 2020)
+corr_crisis = returns.loc['2020-01':'2020-06'].corr()
+sns.heatmap(corr_crisis, annot=True, fmt='.2f', cmap='RdYlGn',
+            vmin=-1, vmax=1, ax=axes[1], linewidths=0.5)
+axes[1].set_title("Corrélation — Crise COVID (Jan–Juin 2020)", fontsize=12, fontweight='bold')
+
+plt.tight_layout()
+plt.show()
+
+print("Corrélation globale (SPY:AAPL) :")
+print(f"   Période calme : {corr_normal.loc['SPY','AAPL']:.2f}")
+print(f"   Crise COVID   : {corr_crisis.loc['SPY','AAPL']:.2f}")
+print("\n Les corrélations augmentent en crise : la diversification disparaît quand on en a le plus besoin !")
